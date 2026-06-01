@@ -23,10 +23,6 @@
 </p>
 
 <p align="center">
-  <sub><a href="docs/SUPPORTED_CLIENTS.md">支持的客户端与日志位置 →</a></sub>
-</p>
-
-<p align="center">
   <img src="https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat" alt="License" />
@@ -35,8 +31,7 @@
 </p>
 
 <p align="center">
-  <b>无需安装即可体验 → <a href="https://tokdash.github.io/demo/">tokdash.github.io/demo</a></b><br/>
-  <sub>完整 UI（主题、日期范围、会话、热力图）均可点击试用，数据由浏览器本地合成，不会上传任何信息。</sub>
+  <b>无需安装即可体验 → <a href="https://tokdash.github.io/demo/">tokdash.github.io/demo</a></b>
 </p>
 
 ## 目录

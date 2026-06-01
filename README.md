@@ -23,10 +23,6 @@
 </p>
 
 <p align="center">
-  <sub><a href="docs/SUPPORTED_CLIENTS.md">Supported clients &amp; where they log →</a></sub>
-</p>
-
-<p align="center">
   <img src="https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat" alt="License" />
@@ -35,8 +31,7 @@
 </p>
 
 <p align="center">
-  <b>Try it without installing → <a href="https://tokdash.github.io/demo/">tokdash.github.io/demo</a></b><br/>
-  <sub>Click through the full UI (themes, date ranges, sessions, heatmap) backed by in-browser synthetic data — nothing is uploaded.</sub>
+  <b>Try it without installing → <a href="https://tokdash.github.io/demo/">tokdash.github.io/demo</a></b>
 </p>
 
 ## Table of Contents

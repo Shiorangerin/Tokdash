@@ -123,18 +123,120 @@ app.add_middleware(
 
 
 _cache: Dict[str, tuple[float, Any]] = {}
-CACHE_TTL = int(os.environ.get("TOKDASH_CACHE_TTL", "120"))  # seconds
+_cache_guard = threading.Lock()  # protects _cache, _key_locks, and _cache_epoch
+_key_locks: Dict[str, threading.Lock] = {}
+_cache_epoch = 0
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer env var, falling back on bad or empty values."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+CACHE_TTL = _positive_int_env("TOKDASH_CACHE_TTL", 120)  # seconds
+
+
+class CacheBackpressureError(RuntimeError):
+    """Raised when a cold cache fill would block request workers under load."""
+
+
+# Bound the number of *heavy* computes (full-history reparses) running at once.
+# Without this, a burst of requests for distinct cache keys each grabs an AnyIO
+# worker token and runs a multi-second parse; the pool saturates (so even cache
+# hits and /health can't get a worker) and RSS balloons. Capping heavy work well
+# below the worker pool keeps headroom for cheap requests.
+# This is the app-side companion to the uvicorn backpressure knobs in cli.py.
+_COMPUTE_CONCURRENCY = _positive_int_env("TOKDASH_COMPUTE_CONCURRENCY", 2)
+_compute_semaphore = threading.BoundedSemaphore(_COMPUTE_CONCURRENCY)
+
+
+def _key_lock(key: str) -> threading.Lock:
+    with _cache_guard:
+        lock = _key_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _key_locks[key] = lock
+        return lock
+
+
+def _cache_get(key: str) -> Optional[tuple[float, Any]]:
+    with _cache_guard:
+        return _cache.get(key)
+
+
+def _cache_epoch_value() -> int:
+    with _cache_guard:
+        return _cache_epoch
+
+
+def _cache_set_if_epoch(key: str, value: Any, epoch: int) -> bool:
+    with _cache_guard:
+        if epoch != _cache_epoch:
+            return False
+        _cache[key] = (datetime.now().timestamp(), value)
+        return True
+
+
+def _clear_cache() -> None:
+    """Drop all cached responses (e.g. after the pricing DB is edited).
+
+    Only cached values are cleared; per-key locks are left intact. The generation
+    counter prevents an in-flight compute that started before this clear from
+    repopulating stale values after it finishes.
+    """
+    global _cache_epoch
+    with _cache_guard:
+        _cache_epoch += 1
+        _cache.clear()
 
 
 def get_cached_or_fetch(key: str, fetch_fn) -> Any:
+    """Cache with single-flight, stale-while-revalidate, and a heavy-compute cap.
+
+    - Fresh hit (age < TTL): returned immediately with no locking or worker contention.
+    - Stale hit: at most one request refreshes the key; concurrent callers keep
+      getting the stale value instead of stampeding the parser.
+    - Cold miss: if this key or the global heavy-compute pool is already busy, fail
+      fast with ``CacheBackpressureError`` so request workers do not pile up while
+      blocked. A later request can retry once the in-flight fill finishes.
+    - A global semaphore bounds how many heavy computes run at once across all keys.
+    """
     now = datetime.now().timestamp()
-    if key in _cache:
-        cached_time, cached_data = _cache[key]
-        if now - cached_time < CACHE_TTL:
-            return cached_data
-    data = fetch_fn()
-    _cache[key] = (now, data)
-    return data
+    hit = _cache_get(key)
+    if hit is not None and now - hit[0] < CACHE_TTL:
+        return hit[1]
+
+    lock = _key_lock(key)
+    if not lock.acquire(blocking=False):
+        # Another thread is already computing this key.
+        if hit is not None:
+            return hit[1]  # serve stale rather than stampede the parser
+        raise CacheBackpressureError(f"Cache fill already in progress for {key}")
+    try:
+        # Re-check under the lock: a prior holder may have just stored a fresh value.
+        latest = _cache_get(key)
+        if latest is not None and datetime.now().timestamp() - latest[0] < CACHE_TTL:
+            return latest[1]
+        epoch = _cache_epoch_value()
+        if not _compute_semaphore.acquire(blocking=False):
+            if latest is not None:
+                return latest[1]
+            raise CacheBackpressureError("Too many cold requests; retry shortly")
+        try:
+            fresh = fetch_fn()
+        finally:
+            _compute_semaphore.release()
+        _cache_set_if_epoch(key, fresh, epoch)
+        return fresh
+    finally:
+        lock.release()
 
 
 def _format_pricing_db(data: Dict[str, Any]) -> str:
@@ -182,8 +284,8 @@ def update_pricing_db(payload: Dict[str, Any]) -> Dict[str, Any]:
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to write pricing_db.json: {e}")
 
-    _cache.clear()
     reload_pricing_db()
+    _clear_cache()
     return {"path": str(PRICING_DB_PATH), "data": data, "text": formatted}
 
 
@@ -193,6 +295,8 @@ def get_usage(period: str = "today", date_from: Optional[str] = None, date_to: O
     try:
         cache_key = f"usage_{period}_{date_from}_{date_to}"
         return get_cached_or_fetch(cache_key, lambda: compute_usage_with_comparison(period, date_from, date_to))
+    except CacheBackpressureError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -207,6 +311,8 @@ def get_openclaw(period: str = "today") -> Dict[str, Any]:
 
     try:
         return get_cached_or_fetch(f"openclaw_{period}", fetch)
+    except CacheBackpressureError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -223,6 +329,8 @@ def get_tools(period: str = "today") -> Dict[str, Any]:
             return data
 
         return get_cached_or_fetch(f"tools_{period}", fetch)
+    except CacheBackpressureError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -231,6 +339,8 @@ def get_tools(period: str = "today") -> Dict[str, Any]:
 def get_codex_sessions(period: str = "today") -> Dict[str, Any]:
     try:
         return get_cached_or_fetch(f"codex_sessions_{period}", lambda: get_codex_sessions_data(period))
+    except CacheBackpressureError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -251,6 +361,8 @@ def get_sessions(tool: str, period: str = "today", date_from: Optional[str] = No
     try:
         cache_key = f"sessions_{tool.strip().lower()}_{period}_{date_from}_{date_to}"
         return get_cached_or_fetch(cache_key, lambda: get_sessions_data(tool, period, date_from, date_to))
+    except CacheBackpressureError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -269,8 +381,13 @@ def get_session(tool: str, session_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# NOTE: the handlers below are intentionally ``async def`` so they run on the event
+# loop and never need an AnyIO worker token. Under heavy load every worker may be
+# busy in a multi-second compute; keeping these (and /health) async means the
+# dashboard shell, manifest, service worker, and the liveness probe stay responsive
+# regardless. They do only trivial, near-instant file I/O.
 @app.get("/", response_class=HTMLResponse)
-def serve_dashboard():
+async def serve_dashboard():
     html_path = STATIC_DIR / "index.html"
     if not html_path.exists():
         return HTMLResponse(content="<h1>Dashboard not found</h1><p>Please create static/index.html</p>", status_code=404)
@@ -278,7 +395,7 @@ def serve_dashboard():
 
 
 @app.get("/manifest.webmanifest")
-def serve_manifest():
+async def serve_manifest():
     path = STATIC_DIR / "manifest.webmanifest"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Manifest not found")
@@ -286,7 +403,7 @@ def serve_manifest():
 
 
 @app.get("/sw.js")
-def serve_service_worker():
+async def serve_service_worker():
     path = STATIC_DIR / "sw.js"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Service worker not found")
@@ -298,10 +415,14 @@ def serve_service_worker():
 def get_stats(year: Optional[int] = None) -> Dict[str, Any]:
     try:
         return get_cached_or_fetch(f"stats_{year}", lambda: compute_stats(year))
+    except CacheBackpressureError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
-def health_check():
+async def health_check():
+    # async so the liveness probe answers even when every worker thread is busy in a
+    # heavy compute — this is what makes an external /health watchdog reliable (P4).
     return {"status": "ok"}

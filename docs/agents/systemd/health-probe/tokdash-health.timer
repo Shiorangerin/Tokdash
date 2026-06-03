@@ -1,0 +1,13 @@
+# Runs the Tokdash health probe periodically. Pair with
+# tokdash-health.service in this directory.
+
+[Unit]
+Description=Run the Tokdash health probe periodically
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

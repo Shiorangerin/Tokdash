@@ -44,6 +44,22 @@ View logs:
 journalctl --user -u tokdash -f
 ```
 
+### (Optional) Add a health-probe backstop
+
+For Linux user services, Tokdash includes an optional `/health` probe timer that
+restarts `tokdash.service` if the process is alive but no longer answering. This
+is a safety net for overload or wedge scenarios; normal installs can skip it.
+
+```bash
+install -Dm644 docs/agents/systemd/health-probe/tokdash-health.service ~/.config/systemd/user/tokdash-health.service
+install -Dm644 docs/agents/systemd/health-probe/tokdash-health.timer ~/.config/systemd/user/tokdash-health.timer
+systemctl --user daemon-reload
+systemctl --user enable --now tokdash-health.timer
+```
+
+See [`health-probe/README.md`](health-probe/README.md) for port overrides,
+restart-loop limits, and testing.
+
 Stop:
 
 ```bash

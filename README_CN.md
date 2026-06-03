@@ -143,6 +143,7 @@ python3 main.py
 参见 `docs/agents/systemd/BACKGROUND_RUN.md`，其中包含：
 - Linux systemd（用户服务）模板
 - macOS launchd（LaunchAgent）模板
+- 可选的 `/health` 健康探测看门狗，可在服务卡死时自动重启
 
 #### 面向人类用户
 
@@ -231,6 +232,9 @@ Tokdash 默认**只监听 localhost**。
 - `TOKDASH_HOST`（默认：`127.0.0.1`）
 - `TOKDASH_PORT`（默认：`55423`）
 - `TOKDASH_CACHE_TTL`（默认：`120` 秒）
+- `TOKDASH_COMPUTE_CONCURRENCY`（默认：`2`）——同时进行的重型历史重解析数量上限；超出的冷请求会立即返回 `503`，而不是在高负载下耗尽服务线程
+- `TOKDASH_LIMIT_CONCURRENCY`（默认：`64`）——uvicorn 接受的最大并发连接数（背压）
+- `TOKDASH_KEEPALIVE`（默认：`5` 秒）——uvicorn keep-alive 超时
 - `TOKDASH_ALLOW_ORIGINS`（逗号分隔，默认：空）
 - `TOKDASH_ALLOW_ORIGIN_REGEX`（默认仅允许 localhost/127.0.0.1）
 - `TOKDASH_NO_RETENTION_NOTICE`（设为 `1` 可静默 `tokdash serve` 启动时打印的历史保留提醒）

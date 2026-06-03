@@ -1,0 +1,16 @@
+# Tokdash health-probe backstop (oneshot).
+#
+# Probes the local /health endpoint and restarts tokdash if it does not answer
+# after a few short attempts. The retries avoid restarting on a transient 503
+# from uvicorn backpressure while still recovering from a real wedge.
+#
+# Install as a user service with the paired timer; see README.md in this
+# directory. Override the port by editing TOKDASH_PORT below or via a drop-in.
+
+[Unit]
+Description=Tokdash health probe (restart tokdash if /health is unresponsive)
+
+[Service]
+Type=oneshot
+Environment=TOKDASH_PORT=55423
+ExecStart=/bin/sh -c 'for i in 1 2 3; do curl -fsS --max-time 5 "http://127.0.0.1:${TOKDASH_PORT}/health" >/dev/null && exit 0; sleep 2; done; systemctl --user restart tokdash.service'

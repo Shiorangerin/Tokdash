@@ -41,8 +41,17 @@ def test_pricing_db_editor_reads_and_saves_valid_json(tmp_path, monkeypatch):
     }
     _write_pricing_db(pricing_path, original)
     monkeypatch.setattr(api, "PRICING_DB_PATH", pricing_path, raising=False)
-    reload_calls = []
-    monkeypatch.setattr(api, "reload_pricing_db", lambda: reload_calls.append(True))
+    events = []
+
+    def fake_reload_pricing_db():
+        events.append("reload")
+
+    def fake_clear_cache():
+        events.append("clear")
+        api._cache.clear()
+
+    monkeypatch.setattr(api, "reload_pricing_db", fake_reload_pricing_db)
+    monkeypatch.setattr(api, "_clear_cache", fake_clear_cache)
     api._cache["stale"] = (0.0, {"old": True})
 
     read_response = api.get_pricing_db()
@@ -53,7 +62,7 @@ def test_pricing_db_editor_reads_and_saves_valid_json(tmp_path, monkeypatch):
     assert save_response["data"] == updated
     assert json.loads(pricing_path.read_text(encoding="utf-8")) == updated
     assert api._cache == {}
-    assert reload_calls == [True]
+    assert events == ["reload", "clear"]
 
 
 def test_pricing_db_editor_rejects_invalid_json_without_overwriting(tmp_path, monkeypatch):
@@ -89,7 +98,7 @@ def test_pricing_db_editor_rejects_missing_models_object(tmp_path, monkeypatch):
 
 
 def test_startup_warmer_populates_initial_overview_date_range(monkeypatch):
-    api._cache.clear()
+    api._clear_cache()
     usage_calls = []
     stats_calls = []
 
@@ -117,4 +126,4 @@ def test_startup_warmer_populates_initial_overview_date_range(monkeypatch):
         assert "stats_None" in api._cache
         assert stats_calls == [None]
     finally:
-        api._cache.clear()
+        api._clear_cache()

@@ -8,6 +8,7 @@ Goal: help the user install Tokdash and keep it running in the background for lo
 - Remote access: local-only, or do they want secure remote access via `tailscale serve`?
 - Port: keep default `55423` or change due to conflicts?
 - Install method: venv vs `pipx` vs system Python?
+- Linux only: do they want the optional `/health` probe timer as a restart backstop?
 
 ## Procedure (do this, in order)
 1. Install Tokdash (`pip install tokdash`) and record the **absolute path** of `tokdash` (`which tokdash`).
@@ -76,7 +77,15 @@ Goal: help the user install Tokdash and keep it running in the background for lo
 6. Show where logs are:
    - systemd: `journalctl --user -u tokdash -f`
    - launchd: `/tmp/tokdash.out.log` and `/tmp/tokdash.err.log` (or whatever the plist sets)
-7. If the user wants remote/mobile access, ask if they want to run:
+7. Linux optional: if the user wants a watchdog-style backstop, install the health-probe timer from `docs/agents/systemd/health-probe/`:
+   ```bash
+   install -Dm644 docs/agents/systemd/health-probe/tokdash-health.service ~/.config/systemd/user/tokdash-health.service
+   install -Dm644 docs/agents/systemd/health-probe/tokdash-health.timer ~/.config/systemd/user/tokdash-health.timer
+   systemctl --user daemon-reload
+   systemctl --user enable --now tokdash-health.timer
+   ```
+   If the service uses a non-default port, edit `TOKDASH_PORT` in the health-probe service or use a drop-in.
+8. If the user wants remote/mobile access, ask if they want to run:
    - `tailscale serve --bg 55423`
    Keep Tokdash bound to `127.0.0.1`; avoid exposing `0.0.0.0` unless explicitly requested.
 

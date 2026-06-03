@@ -97,3 +97,30 @@ def test_serve_skips_browser_when_headless(monkeypatch):
     started = _patch_serve(monkeypatch, has_display=False)
     cli.serve("127.0.0.1", 55423, "info", open_browser=True)
     assert started == []
+
+
+def test_positive_int_env_defaults_and_validation(monkeypatch):
+    monkeypatch.delenv("X_KNOB", raising=False)
+    assert cli._positive_int_env("X_KNOB", 64) == 64  # unset -> default
+    monkeypatch.setenv("X_KNOB", "")
+    assert cli._positive_int_env("X_KNOB", 64) == 64  # blank -> default
+    monkeypatch.setenv("X_KNOB", "nope")
+    assert cli._positive_int_env("X_KNOB", 64) == 64  # non-int -> default
+    monkeypatch.setenv("X_KNOB", "0")
+    assert cli._positive_int_env("X_KNOB", 64) == 64  # non-positive -> default
+    monkeypatch.setenv("X_KNOB", "-5")
+    assert cli._positive_int_env("X_KNOB", 64) == 64
+    monkeypatch.setenv("X_KNOB", "128")
+    assert cli._positive_int_env("X_KNOB", 64) == 128  # valid override wins
+
+
+def test_serve_passes_backpressure_knobs_to_uvicorn(monkeypatch):
+    """serve() must hand uvicorn the concurrency/keep-alive limits (P2 backpressure)."""
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *a, **k: captured.update(k))
+    monkeypatch.setattr(cli, "_has_display", lambda: False)
+    monkeypatch.setenv("TOKDASH_LIMIT_CONCURRENCY", "99")
+    monkeypatch.setenv("TOKDASH_KEEPALIVE", "7")
+    cli.serve("127.0.0.1", 55423, "info", open_browser=False)
+    assert captured["limit_concurrency"] == 99
+    assert captured["timeout_keep_alive"] == 7

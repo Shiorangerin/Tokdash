@@ -1645,6 +1645,8 @@
         styleArcade: 'Arcade',
         styleStudio: 'Studio',
         loading: 'Loading…',
+        temporaryOverload: 'Temporarily busy. Try Refresh again.',
+        loadFailed: 'Failed to load data.',
         statsLoadFailed: 'Failed to load stats.',
         retry: 'Retry',
         overview: 'Overview',
@@ -1805,6 +1807,8 @@
         styleArcade: '街机',
         styleStudio: '工作室',
         loading: '加载中…',
+        temporaryOverload: '暂时繁忙，请稍后刷新重试。',
+        loadFailed: '数据加载失败。',
         statsLoadFailed: '统计数据加载失败。',
         retry: '重试',
         overview: '概览',
@@ -2300,6 +2304,29 @@
       document.getElementById('lastUpdate').textContent = `${t('lastUpdated')}: ${formatMonthDayTime(lastUsageResponse.timestamp)}`;
     }
 
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (_error) {
+        payload = null;
+      }
+      if (!response.ok) {
+        const error = new Error(payload?.detail || `HTTP ${response.status}`);
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
+      }
+      return payload;
+    }
+
+    function setDashboardFetchStatus(error) {
+      const lastUpdate = document.getElementById('lastUpdate');
+      if (!lastUpdate) return;
+      lastUpdate.textContent = error?.status === 503 ? t('temporaryOverload') : t('loadFailed');
+    }
+
     function applyI18n() {
       document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
       document.querySelectorAll('[data-i18n]').forEach((el) => {
@@ -2712,7 +2739,7 @@
         (dateFrom && dateTo)
           ? `/api/sessions?tool=${tool}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`
           : `/api/sessions?tool=${tool}&period=${encodeURIComponent(customDays ? String(customDays) : 'today')}`);
-      const [codex, claude, opencode] = await Promise.all(urls.map((u) => fetch(u).then((r) => r.json())));
+      const [codex, claude, opencode] = await Promise.all(urls.map((u) => fetchJson(u)));
       return { codex, claude, opencode, combined: buildCombinedSessionsData({ codex, claude, opencode }) };
     }
 
@@ -2739,7 +2766,7 @@
       renderRefreshButton();
 
       try {
-        const usagePromise = fetch(usageApiUrl).then((r) => r.json());
+        const usagePromise = fetchJson(usageApiUrl);
         if (wantSessions) {
           const [usageData, sessions] = await Promise.all([
             usagePromise,
@@ -2759,7 +2786,12 @@
         if (isSessionsActive()) renderSessionsTab();
       } catch (error) {
         console.error('Error fetching data:', error);
-        alert('Failed to fetch data. Check console for details.');
+        setDashboardFetchStatus(error);
+        if (isOverviewActive() && lastUsageResponse) renderOverviewTab(lastUsageResponse);
+        if (isSessionsActive()) renderSessionsTab();
+        if (error?.status !== 503 && !lastUsageResponse) {
+          alert('Failed to fetch data. Check console for details.');
+        }
       } finally {
         updateInFlight = false;
         renderRefreshButton();
@@ -2781,6 +2813,8 @@
         renderSessionsTab();
       } catch (error) {
         console.error('Error fetching sessions:', error);
+        setDashboardFetchStatus(error);
+        renderSessionsTab();
       }
     }
 

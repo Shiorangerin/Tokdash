@@ -145,6 +145,7 @@ Binding to `0.0.0.0` is possible, but **not recommended**: it listens on all int
 See `docs/agents/systemd/BACKGROUND_RUN.md` for:
 - Linux systemd (user service) template
 - macOS launchd (LaunchAgent) template
+- Optional `/health` watchdog that auto-restarts a wedged service
 
 #### For Humans
 
@@ -232,6 +233,9 @@ Tokdash is **localhost-only by default**.
 - `TOKDASH_HOST` (default: `127.0.0.1`)
 - `TOKDASH_PORT` (default: `55423`)
 - `TOKDASH_CACHE_TTL` (default: `120` seconds)
+- `TOKDASH_COMPUTE_CONCURRENCY` (default: `2`) — cap on simultaneous heavy history reparses; excess cold requests return a fast `503` instead of saturating the server under load
+- `TOKDASH_LIMIT_CONCURRENCY` (default: `64`) — uvicorn connection cap (backpressure)
+- `TOKDASH_KEEPALIVE` (default: `5` seconds) — uvicorn keep-alive timeout
 - `TOKDASH_ALLOW_ORIGINS` (comma-separated, default: empty)
 - `TOKDASH_ALLOW_ORIGIN_REGEX` (default allows only localhost/127.0.0.1)
 - `TOKDASH_NO_RETENTION_NOTICE` (set to `1` to silence the history-retention reminder printed on `tokdash serve`)

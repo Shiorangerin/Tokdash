@@ -1,14 +1,96 @@
+import os
+
 import pytest
 
 
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
-from tokdash.api import app
+import tokdash.api as api
 
 
-def test_api_endpoints_and_dashboard_smoke():
-    client = TestClient(app)
+def _enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+@pytest.fixture(autouse=True)
+def _reset_api_cache(monkeypatch):
+    monkeypatch.setenv("TOKDASH_WARM_ON_START", "0")
+    api._clear_cache()
+    with api._cache_guard:
+        api._key_locks.clear()
+    yield
+    api._clear_cache()
+    with api._cache_guard:
+        api._key_locks.clear()
+
+
+@pytest.fixture
+def synthetic_api_data(monkeypatch):
+    """Keep default API smoke tests hermetic and cheap.
+
+    The real local-log walk is useful as an integration/stress check, but it can
+    reparse large session histories and compete with the installed dashboard
+    service. Default tests should only verify routing/response shape.
+    """
+
+    def fake_usage(period, date_from, date_to):
+        return {
+            "period": period,
+            "date_from": date_from,
+            "date_to": date_to,
+            "total_tokens": 123,
+            "total_messages": 4,
+            "comparison": {"previous_total_tokens": 100},
+            "openclaw_models": [],
+            "coding_apps": [],
+        }
+
+    def fake_tools(period):
+        return {"apps": [], "all_models": [], "period": period}
+
+    def fake_openclaw(period):
+        return {"models": [], "contributions": [], "period": period}
+
+    def fake_stats(year):
+        return {"contributions": [], "stats": {"year": year}}
+
+    def fake_sessions(tool, period, date_from=None, date_to=None):
+        return {
+            "tool": tool.strip().lower(),
+            "period": period,
+            "date_from": date_from,
+            "date_to": date_to,
+            "sessions": [{"session_id": "session-1"}],
+            "latest_session": {"session_id": "session-1"},
+        }
+
+    def fake_session_detail(tool, session_id):
+        return {"session": {"tool": tool, "session_id": session_id}, "turns": []}
+
+    def fake_codex_sessions(period):
+        return {
+            "tool": "codex",
+            "period": period,
+            "sessions": [{"session_id": "codex-session-1"}],
+            "latest_session": {"session_id": "codex-session-1"},
+        }
+
+    def fake_codex_session_detail(session_id):
+        return {"session": {"tool": "codex", "session_id": session_id}, "turns": []}
+
+    monkeypatch.setattr(api, "compute_usage_with_comparison", fake_usage)
+    monkeypatch.setattr(api, "get_tools_data", fake_tools)
+    monkeypatch.setattr(api, "get_openclaw_data", fake_openclaw)
+    monkeypatch.setattr(api, "compute_stats", fake_stats)
+    monkeypatch.setattr(api, "get_sessions_data", fake_sessions)
+    monkeypatch.setattr(api, "get_session_detail", fake_session_detail)
+    monkeypatch.setattr(api, "get_codex_sessions_data", fake_codex_sessions)
+    monkeypatch.setattr(api, "get_codex_session_detail", fake_codex_session_detail)
+
+
+def test_api_endpoints_and_dashboard_smoke(synthetic_api_data):
+    client = TestClient(api.app)
 
     usage = client.get("/api/usage", params={"period": "today"}).json()
     assert "total_tokens" in usage
@@ -76,8 +158,8 @@ def test_api_endpoints_and_dashboard_smoke():
     assert "no-store" in icon_response.headers["cache-control"]
 
 
-def test_api_custom_date_ranges_and_validation():
-    client = TestClient(app)
+def test_api_custom_date_ranges_and_validation(synthetic_api_data):
+    client = TestClient(api.app)
 
     usage = client.get("/api/usage", params={"date_from": "2026-04-08", "date_to": "2026-04-08"})
     assert usage.status_code == 200
@@ -101,3 +183,21 @@ def test_api_custom_date_ranges_and_validation():
     reversed_range = client.get("/api/usage", params={"date_from": "2026-04-09", "date_to": "2026-04-08"})
     assert reversed_range.status_code == 400
     assert "on or before" in reversed_range.json()["detail"]
+
+
+@pytest.mark.skipif(
+    not _enabled("TOKDASH_RUN_REAL_API_SMOKE"),
+    reason="set TOKDASH_RUN_REAL_API_SMOKE=1 to walk real local logs; this is intentionally heavy",
+)
+def test_api_endpoints_against_real_local_logs():
+    """Opt-in integration/stress check for the real parser stack."""
+    client = TestClient(api.app)
+
+    usage = client.get("/api/usage", params={"period": "today"}).json()
+    assert "total_tokens" in usage
+    assert "total_messages" in usage
+    assert "comparison" in usage
+
+    stats = client.get("/api/stats").json()
+    assert "contributions" in stats
+    assert "stats" in stats

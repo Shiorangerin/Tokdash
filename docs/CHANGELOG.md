@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.5.4 - 2026-06-03
+
+### Added
+- `scripts/bench_openclaw.py` — a local benchmark helper for validating OpenClaw parser totals and cold/warm parse latency across common windows.
+- `docs/agents/systemd/health-probe/` — an optional systemd user timer + oneshot that restarts Tokdash if `/health` stops answering after several short attempts, turning an "alive but wedged" hang into automatic recovery.
+
+### Changed
+- **OpenClaw cold-start performance.** OpenClaw session parsing now caches parsed entries by file signature and filters by date from memory, so repeated Overview/Stats calls no longer re-read the full OpenClaw log set. Startup warming also precomputes the dashboard's initial Overview and Stats cache keys, the Overview tab defers `/api/sessions` calls until the Sessions tab opens, and the frontend prefetches Stats in the background.
+- **Overload resilience.** Under a heavy request burst the server could become unresponsive while the process stayed alive (so `systemctl` still reported it healthy). The response cache now does **single-flight with stale-while-revalidate** — concurrent refreshes for the same stale key collapse into one compute and readers get the last value instead of stampeding the parser — and a **global heavy-compute cap** (`TOKDASH_COMPUTE_CONCURRENCY`, default 2) keeps a burst of cold requests from saturating the worker pool. Cold misses over the cap now return `503` quickly instead of queuing inside worker threads. The `/health`, dashboard, manifest, and service-worker handlers are now async so liveness/health probes keep responding even while every worker is busy. `serve` also passes uvicorn backpressure limits (`TOKDASH_LIMIT_CONCURRENCY` default 64, `TOKDASH_KEEPALIVE` default 5).
+- README (English + 中文): documented the new overload/backpressure environment knobs and the optional `/health` watchdog.
+
+### Fixed
+- **OpenClaw duplicate token accounting.** Snapshot/checkpoint/backup/sidecar files such as `*.checkpoint.*.jsonl`, `*.jsonl.bak-*`, `*.trajectory.jsonl`, and `*.acp-stream.jsonl` are excluded from usage parsing, entries are deduplicated by message id, and all-zero assistant usage rows are ignored. This corrects inflated OpenClaw totals caused by duplicated transcript copies.
+- **Pricing DB cache invalidation race.** Pricing updates now reload session pricing before clearing the API response cache, and in-flight computations that started before a cache clear can no longer repopulate stale results.
+- **Frontend `503` handling.** Overview and Sessions now treat fail-fast backpressure responses as errors, keep the last good data on screen, and show a temporary busy status instead of rendering the error body as zero/NaN metrics.
+
 ## 0.5.3 - 2026-06-03
 
 ### Changed

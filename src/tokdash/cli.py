@@ -34,6 +34,21 @@ def _default_port() -> int:
         raise SystemExit(f"Invalid TOKDASH_PORT={raw!r}. {e} Use --port <1-65535>.")
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer from the environment, falling back on bad/empty values.
+
+    A misconfigured knob must never crash ``serve``; we just use the default.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 def build_parser(prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog, description="Tokdash")
     parser.add_argument(
@@ -148,7 +163,18 @@ def serve(host: str, port: int, log_level: str, open_browser: bool = True) -> No
         timer = threading.Timer(1.0, _open_browser, args=(url,))
         timer.daemon = True
         timer.start()
-    uvicorn.run(app, host=host, port=port, log_level=log_level)
+    # Backpressure: cap accepted concurrency and keep-alive lifetime so a load burst
+    # returns 503 fast instead of queuing forever and wedging the server. The limit
+    # sits above the AnyIO worker pool (~40) so cheap cache hits aren't rejected, but
+    # is bounded so the connection backlog can't grow without limit.
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level=log_level,
+        limit_concurrency=_positive_int_env("TOKDASH_LIMIT_CONCURRENCY", 64),
+        timeout_keep_alive=_positive_int_env("TOKDASH_KEEPALIVE", 5),
+    )
 
 
 def export(period: str, pretty: bool, output: str | None) -> None:

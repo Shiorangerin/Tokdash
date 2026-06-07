@@ -326,7 +326,7 @@ class CodexParser(BaseParser):
                     # So fresh_input = input_tokens - cached_input_tokens
                     total_input = self._i(usage.get("input_tokens"))
                     cache_read = self._i(usage.get("cached_input_tokens"))
-                    input_t = total_input - cache_read  # Fresh input only
+                    input_t = max(0, total_input - cache_read)  # Fresh input only
                     output_t = self._i(usage.get("output_tokens"))
                     reasoning = self._i(usage.get("reasoning_output_tokens"))
 
